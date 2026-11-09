@@ -432,3 +432,5 @@ FodyWeavers.xsd
 secrets/*
 !secrets/.keep
 output/
+characters/*/.mock
+characters/*/*.ref.jpg

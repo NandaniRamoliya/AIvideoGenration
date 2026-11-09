@@ -131,11 +131,17 @@ def ref_urls(ch: Character) -> dict:
 
 def build_refs(cfg: dict, ch: Character, style: str, mock: bool = False) -> None:
     """Generate the reference sheet once. Delete front.png/side.png to redesign a character."""
+    marker = ch.dir / ".mock"
+    if not mock and marker.exists():          # placeholder cards from a --mock run: replace with real designs
+        for p in (ch.front, ch.side, marker):
+            p.unlink(missing_ok=True)
+        ch.data.pop("_urls", None)
     if ch.has_refs:
         return
     ch.dir.mkdir(parents=True, exist_ok=True)
     if mock:
         _mock_card(cfg, ch)
+        marker.touch()
         return
 
     from .visuals import fal_run   # local import avoids a cycle

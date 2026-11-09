@@ -39,7 +39,8 @@ def prepare_cast(cfg: dict, script: dict, style: str, job: Job, mock: bool) -> N
             if not spec.get("look"):
                 raise RuntimeError(f"Character '{spec['id']}' isn't in characters/ and the script gave no look for it")
             ch = cast.register(cfg, {**spec, "style": style})
-        if not ch.has_refs:
+        placeholder = (ch.dir / ".mock").exists() and not mock
+        if not ch.has_refs or placeholder:
             log.info("Designing %s ...", ch.name)
             cast.build_refs(cfg, ch, ch.data.get("style") or style, mock=mock)
             if not mock:

@@ -57,8 +57,7 @@ python run.py make --series grandma-tales --mock
 ```
 ⚠️ **Mock mode does not make real visuals.** It produces a *storyboard animatic*: placeholder character cards, the shot descriptions as text, and robot voices. It's only for checking that timing, voices and captions work. Real characters and animation need the API keys below.
 
-> Mock runs write placeholder cards into `characters/*/front.png`. Before your first real run, delete them:
-> `python run.py cast redesign dadi` (and kabir, zara, bolt), or just delete those `front.png` / `side.png` files.
+> Mock runs save placeholder cards as character images; your first real run replaces them with real designs automatically.
 
 ## 3. API keys
 
