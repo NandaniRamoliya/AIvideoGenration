@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AI Character Story Shorts — characters → episode script → voices → consistent AI shots → edit → review → publish.
+AI Character Story Shorts (₹0 by default) — characters → episode script → voices → consistent AI shots → edit → review → publish.
 
   python run.py make --series grandma-tales      next episode of a series (recurring cast + memory)
   python run.py make --count 3                   3 stand-alone stories with freshly invented characters
@@ -12,6 +12,9 @@ AI Character Story Shorts — characters → episode script → voices → consi
   python run.py cast redesign kabir              regenerate a character's reference images
   python run.py series list                      series, cast and episode count
   python run.py voices                           list voices in your ElevenLabs account
+
+  python run.py finish <id>                      (free mode) build the video after you added images/clips
+  python run.py pack <id>                        (free mode) refresh the FLOW_PACK.html checklist
 
   python run.py list | approve <id> | reject <id> | redo <id> --shots 2,5 | resume <id>
   python run.py publish <id> | publish --approved [--at "2026-11-10 18:30"] | auth-youtube
@@ -26,11 +29,15 @@ import shutil
 import sys
 from datetime import datetime
 
-from pipeline import assemble, cast, visuals, voice, writer
+from pipeline import assemble, cast, flowpack, visuals, voice, writer
 from pipeline.common import Job, load_config, log, setup_logging
 
 
 # ---------------------------------------------------------------- pipeline
+def manual_mode(cfg: dict, mock: bool) -> bool:
+    return cfg["providers"]["visuals"] == "manual" and not mock
+
+
 def prepare_cast(cfg: dict, script: dict, style: str, job: Job, mock: bool) -> None:
     """Register new characters and make sure everyone has a reference sheet."""
     for spec in script["cast"]:
@@ -39,6 +46,8 @@ def prepare_cast(cfg: dict, script: dict, style: str, job: Job, mock: bool) -> N
             if not spec.get("look"):
                 raise RuntimeError(f"Character '{spec['id']}' isn't in characters/ and the script gave no look for it")
             ch = cast.register(cfg, {**spec, "style": style})
+        if manual_mode(cfg, mock):
+            continue     # in free mode you design characters on Flow (the pack tells you how)
         placeholder = (ch.dir / ".mock").exists() and not mock
         if not ch.has_refs or placeholder:
             log.info("Designing %s ...", ch.name)
@@ -47,8 +56,9 @@ def prepare_cast(cfg: dict, script: dict, style: str, job: Job, mock: bool) -> N
                 job.add_cost(2 * cfg["images"]["price_per_image"])
 
 
-def produce(cfg: dict, job: Job, mock: bool, genre: str | None = None, idea: str | None = None, series_id: str | None = None) -> None:
-    """Runs every stage that hasn't finished yet for this job (safe to re-run)."""
+def produce(cfg: dict, job: Job, mock: bool, genre: str | None = None, idea: str | None = None, series_id: str | None = None) -> bool:
+    """Runs every stage that hasn't finished yet for this job (safe to re-run).
+    Returns False when the job is waiting for you to add visuals (free mode)."""
     try:
         series_id = series_id or job.data.get("series")
         series = writer.get_series(cfg, series_id)
@@ -72,7 +82,19 @@ def produce(cfg: dict, job: Job, mock: bool, genre: str | None = None, idea: str
         tp = job.path("timing.json")
         timing = json.loads(tp.read_text("utf-8")) if tp.exists() else voice.narrate(cfg, script, job.dir, mock=mock)
 
-        clips = visuals.make_all_shots(cfg, job, script, timing, style, mock=mock)
+        if manual_mode(cfg, mock):
+            flowpack.ingest_characters(cfg, job)
+            clips, missing = flowpack.build_clips(cfg, job, script, timing)
+            pack = flowpack.write_pack(cfg, job, script, timing, style)
+            if missing:
+                job.set(status="needs_visuals", missing=missing, error=None)
+                log.info("⏸ %s needs visuals for shot(s) %s", job.id, missing)
+                log.info("   1. open  %s", pack)
+                log.info("   2. save images/clips into  %s", flowpack.inbox(job))
+                log.info("   3. run   python run.py finish %s", job.id)
+                return False
+        else:
+            clips = visuals.make_all_shots(cfg, job, script, timing, style, mock=mock)
         assemble.render(cfg, job, clips, timing, script)
         job.set(status="rendered", mock=mock, error=None)
         if not mock and not job.data.get("remembered"):
@@ -81,6 +103,7 @@ def produce(cfg: dict, job: Job, mock: bool, genre: str | None = None, idea: str
                 writer.add_series_memory(cfg, series_id, script)
             job.set(remembered=True)
         log.info("✔ %s ready for review → %s  (est. cost $%.2f)", job.id, job.path("final.mp4"), job.data.get("cost_usd", 0))
+        return True
     except Exception as e:
         job.set(status="failed", error=str(e))
         log.error("✘ %s failed: %s", job.id, e)
@@ -89,18 +112,21 @@ def produce(cfg: dict, job: Job, mock: bool, genre: str | None = None, idea: str
 
 # ---------------------------------------------------------------- commands
 def cmd_make(cfg, a):
-    ok = 0
+    ok = waiting = 0
     for n in range(a.count):
         log.info("──── Video %d/%d ────", n + 1, a.count)
         job = Job.create(cfg)
         try:
-            produce(cfg, job, a.mock, a.genre, a.idea, a.series)
-            ok += 1
+            ok += 1 if produce(cfg, job, a.mock, a.genre, a.idea, a.series) else 0
+            waiting += 0 if job.data.get("status") != "needs_visuals" else 1
         except Exception:
             if a.count == 1:
                 return 1
-    log.info("Done: %d/%d videos in the review queue. Next: python run.py list", ok, a.count)
-    return 0 if ok == a.count else 1
+    if waiting:
+        log.info("Done: %d script(s) + voices ready, waiting for your visuals. Open each FLOW_PACK.html (python run.py list).", waiting)
+    else:
+        log.info("Done: %d/%d videos in the review queue. Next: python run.py list", ok, a.count)
+    return 0
 
 
 def cmd_resume(cfg, a):
@@ -112,9 +138,14 @@ def cmd_redo(cfg, a):
     job = Job.load(cfg, a.id)
     script = json.loads(job.path("script.json").read_text("utf-8"))
     idx = [int(s) - 1 for s in a.shots.split(",")]
+    media = flowpack.find_media(job, len(script["shots"])) if job.path("inbox").exists() else {}
     for i in idx:
         for name in (f"shot{i:02d}_clip.mp4", f"shot{i:02d}_key.png"):
             job.path(name).unlink(missing_ok=True)
+        if i in media and manual_mode(cfg, a.mock):
+            redo_dir = job.path("inbox") / "_replaced"
+            redo_dir.mkdir(exist_ok=True)
+            media[i].rename(redo_dir / media[i].name)      # kept, not deleted
         script["shots"][i].pop("image_url", None)
         if a.prompt:
             script["shots"][i]["image_prompt"] = a.prompt
@@ -136,6 +167,9 @@ def cmd_list(cfg, a):
         print(f"{d['id']:<22} {d.get('status', ''):<10} ${d.get('cost_usd', 0):>5.2f}  {d.get('genre', '')[:22]:<22} {d.get('title', '')}")
         if d.get("status") == "rendered":
             print(f"{'':<22} ↳ watch: {j.path('final.mp4')}")
+        if d.get("status") == "needs_visuals":
+            print(f"{'':<22} ↳ missing shots {d.get('missing')} · open {j.path('FLOW_PACK.html')}")
+            print(f"{'':<22} ↳ drop files in {j.path('inbox')} then: python run.py finish {d['id']}")
         if d.get("youtube_url"):
             print(f"{'':<22} ↳ {d['youtube_url']}")
 
@@ -213,12 +247,36 @@ def cmd_series(cfg, a):
 
 
 def cmd_voices(cfg, a):
+    if cfg["providers"]["tts"] == "edge":
+        import asyncio
+        try:
+            import edge_tts
+        except ImportError:
+            raise SystemExit("pip install edge-tts")
+        voices = asyncio.run(edge_tts.list_voices())
+        lang = (a.lang or "").lower()
+        for v in voices:
+            if lang and not v["ShortName"].lower().startswith(lang):
+                continue
+            print(f"{v['ShortName']:<34} {v['Gender']:<7} {v.get('Locale', '')}")
+        print("\nUse a name in config.yaml > edge_voices, or per character: edge_voice: \"en-IN-NeerjaNeural\"")
+        print("Filter by language: python run.py voices --lang hi-IN   (gu-IN, en-IN, en-US ...)")
+        return
     from pipeline.common import env, http
     r = http("GET", "https://api.elevenlabs.io/v1/voices", headers={"xi-api-key": env("ELEVENLABS_API_KEY")})
     for v in r.json().get("voices", []):
         labels = ", ".join(f"{k}:{val}" for k, val in (v.get("labels") or {}).items())
         print(f"{v['voice_id']}  {v['name']:<22} {labels}")
     print("\nPaste IDs into config.yaml > voices, or into characters/<id>/character.yaml > voice_id")
+
+
+def cmd_pack(cfg, a):
+    job = Job.load(cfg, a.id)
+    script = json.loads(job.path("script.json").read_text("utf-8"))
+    timing = json.loads(job.path("timing.json").read_text("utf-8"))
+    style = writer.style_for(cfg, writer.get_series(cfg, job.data.get("series")))
+    flowpack.ingest_characters(cfg, job)
+    print(flowpack.write_pack(cfg, job, script, timing, style))
 
 
 def cmd_clean(cfg, a):
@@ -250,7 +308,9 @@ def main(argv=None) -> int:
     cs = sub.add_parser("cast"); cs.add_argument("action", choices=["list", "new", "redesign"]); cs.add_argument("id", nargs="?")
     cs.add_argument("--name"); cs.add_argument("--look"); cs.add_argument("--personality"); cs.add_argument("--voice-type"); cs.add_argument("--mock", action="store_true")
     sr = sub.add_parser("series"); sr.add_argument("action", choices=["list"])
-    sub.add_parser("voices")
+    vc = sub.add_parser("voices"); vc.add_argument("--lang")
+    fi = sub.add_parser("finish"); fi.add_argument("id")
+    pk = sub.add_parser("pack"); pk.add_argument("id")
     sub.add_parser("auth-youtube")
 
     a = p.parse_args(argv)
@@ -264,7 +324,8 @@ def main(argv=None) -> int:
         "make": cmd_make, "resume": cmd_resume, "redo": cmd_redo, "list": cmd_list,
         "approve": lambda c, x: cmd_review(c, x, "approved"), "reject": lambda c, x: cmd_review(c, x, "rejected"),
         "publish": cmd_publish, "ideas": cmd_ideas, "clean": cmd_clean,
-        "cast": cmd_cast, "series": cmd_series, "voices": cmd_voices,
+        "cast": cmd_cast, "series": cmd_series, "voices": cmd_voices, "pack": cmd_pack,
+        "finish": lambda c, x: produce(c, Job.load(c, x.id), False) and 0,
         "auth-youtube": lambda c, x: __import__("pipeline.youtube", fromlist=["authorize"]).authorize(c),
     }
     return handlers[a.cmd](cfg, a) or 0

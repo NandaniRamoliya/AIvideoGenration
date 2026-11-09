@@ -9,9 +9,39 @@ channel:
   audience: "general audience, 13+"
   call_to_action: "Follow for the next episode."
 
+# ------------------------------------------------------------
+# PROVIDERS — the default setup costs ₹0.
+#   llm:     gemini (free tier)        | claude (paid)
+#   tts:     edge   (free MS voices)   | elevenlabs (paid)
+#   visuals: manual (you make images/clips on Google Flow or any free site,
+#                    drop them in the job's inbox folder)  | fal (paid, fully automatic)
+# ------------------------------------------------------------
+providers:
+  llm: "gemini"
+  tts: "edge"
+  visuals: "manual"
+
 llm:
-  model: "claude-sonnet-5-5"
-  max_tokens: 5000
+  gemini:
+    model: "gemini-2.5-flash"
+    max_tokens: 8000
+    temperature: 1.0
+  claude:
+    model: "claude-sonnet-5-5"
+    max_tokens: 5000
+
+# Free Microsoft Edge voices per voice type (rate/pitch tweak the voice).
+# List all voices: python run.py voices   (Hindi: hi-IN-SwaraNeural / hi-IN-MadhurNeural,
+# Gujarati: gu-IN-DhwaniNeural / gu-IN-NiranjanNeural)
+edge_voices:
+  narrator:       { voice: "en-IN-PrakashNeural", rate: "-5%",  pitch: "+0Hz" }
+  man:            { voice: "en-US-GuyNeural",     rate: "+0%",  pitch: "+0Hz" }
+  woman:          { voice: "en-IN-NeerjaNeural",  rate: "+0%",  pitch: "+0Hz" }
+  old_man:        { voice: "en-GB-RyanNeural",    rate: "-10%", pitch: "-8Hz" }
+  old_woman:      { voice: "en-IN-NeerjaNeural",  rate: "-12%", pitch: "-12Hz" }
+  boy:            { voice: "en-US-AnaNeural",     rate: "+5%",  pitch: "-15Hz" }
+  girl:           { voice: "en-GB-MaisieNeural",  rate: "+5%",  pitch: "+0Hz" }
+  robot_creature: { voice: "en-US-ChristopherNeural", rate: "+8%", pitch: "-20Hz" }
 
 # Default look for every video. Each series can override it.
 # Examples: "3D animated Pixar-style film" | "anime, Studio-Ghibli-inspired painterly"

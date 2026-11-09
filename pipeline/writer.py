@@ -5,10 +5,8 @@ import json
 import random
 import re
 
-from . import cast
-from .common import env, http, log, rel
-
-API_URL = "https://api.anthropic.com/v1/messages"
+from . import cast, llm
+from .common import log, rel
 
 
 def _schema(cfg: dict) -> str:
@@ -39,14 +37,8 @@ def _schema(cfg: dict) -> str:
 }}"""
 
 
-def _claude(cfg: dict, system: str, prompt: str) -> str:
-    r = http(
-        "POST", API_URL,
-        headers={"x-api-key": env("ANTHROPIC_API_KEY"), "anthropic-version": "2023-06-01", "content-type": "application/json"},
-        json={"model": cfg["llm"]["model"], "max_tokens": cfg["llm"]["max_tokens"],
-              "system": system, "messages": [{"role": "user", "content": prompt}]},
-    )
-    return "".join(b.get("text", "") for b in r.json()["content"])
+def _llm(cfg: dict, system: str, prompt: str) -> str:
+    return llm.chat(cfg, system, prompt)
 
 
 def _extract_json(text: str) -> dict:
@@ -157,7 +149,7 @@ Return ONLY valid JSON in this exact shape, no prose:
 
     for _ in range(3):
         try:
-            data = _extract_json(_claude(cfg, system_prompt(cfg), prompt))
+            data = _extract_json(_llm(cfg, system_prompt(cfg), prompt))
             validate(data)
             log.info("Story: %s  (%s, %d shots, cast: %s)", data["title"], genre, len(data["shots"]),
                      ", ".join(c.get("name", c["id"]) for c in data["cast"]))
@@ -182,7 +174,7 @@ def validate(script: dict) -> None:
 
 def brainstorm(cfg: dict, genre: str, n: int = 10, series: dict | None = None) -> list[str]:
     ctx = f" for the series '{series['name']}' ({series['premise']})" if series else ""
-    text = _claude(cfg, system_prompt(cfg),
+    text = _llm(cfg, system_prompt(cfg),
                    f"Give {n} original, scroll-stopping {genre} episode premises{ctx}. "
                    f"One line each: characters + conflict + twist. Return a JSON list of strings only.")
     m = re.search(r"\[.*\]", text, re.S)

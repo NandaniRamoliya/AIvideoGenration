@@ -74,6 +74,92 @@ def tts_line(cfg: dict, speaker: str, text: str, out_wav: Path) -> tuple[list, l
     return a["characters"], a["character_start_times_seconds"], a["character_end_times_seconds"]
 
 
+def _edge_voice(cfg: dict, speaker: str) -> dict:
+    voices = cfg["edge_voices"]
+    if speaker == "narrator":
+        return voices["narrator"]
+    ch = cast.Character(cfg, speaker)
+    if ch.data.get("edge_voice"):                       # per-character override
+        v = ch.data["edge_voice"]
+        return v if isinstance(v, dict) else {"voice": v}
+    return voices.get(ch.data.get("voice_type", ""), voices["narrator"])
+
+
+def _norm(t: str) -> str:
+    return "".join(ch for ch in t.lower() if ch.isalnum())
+
+
+def _attach_punctuation(text: str, words: list[tuple[str, float, float]]) -> tuple[list, list, list]:
+    """Edge word events drop punctuation and may split hyphenated words; map them back
+    onto the original tokens so captions show the real text."""
+    tokens = text.split()
+    out: list[list] = []          # [token, start, end]
+    ti = 0
+    for w, s, e in words:
+        nw = _norm(w)
+        if not nw:
+            continue
+        hit = next((k for k in range(ti, min(ti + 4, len(tokens))) if nw in _norm(tokens[k])), None)
+        if hit is not None:
+            out.append([tokens[hit], s, e])
+            ti = hit + 1
+        elif out and nw in _norm(out[-1][0]):     # second half of "ten-year-old" etc.
+            out[-1][2] = e
+        else:
+            out.append([w, s, e])
+    chars, starts, ends = [], [], []
+    for tok, s, e in out:
+        n = max(len(tok), 1)
+        for k, c in enumerate(tok):
+            chars.append(c)
+            starts.append(s + (e - s) * k / n)
+            ends.append(s + (e - s) * (k + 1) / n)
+        chars.append(" "); starts.append(e); ends.append(e)
+    return chars, starts, ends
+
+
+def tts_line_edge(cfg: dict, speaker: str, text: str, out_wav: Path) -> tuple[list, list, list]:
+    """Free Microsoft Edge neural voices (pip install edge-tts). Gives word timings."""
+    try:
+        import asyncio
+        import edge_tts
+    except ImportError:
+        raise SystemExit("Free voices need the edge-tts package: pip install edge-tts")
+    v = _edge_voice(cfg, speaker)
+    kw = {"rate": v.get("rate", "+0%"), "pitch": v.get("pitch", "+0Hz")}
+
+    async def run():
+        try:
+            comm = edge_tts.Communicate(text, v["voice"], boundary="WordBoundary", **kw)
+        except TypeError:          # older edge-tts versions always send word boundaries
+            comm = edge_tts.Communicate(text, v["voice"], **kw)
+        audio, words = bytearray(), []
+        async for chunk in comm.stream():
+            if chunk["type"] == "audio":
+                audio += chunk["data"]
+            elif chunk["type"] == "WordBoundary":
+                s = chunk["offset"] / 1e7
+                words.append((chunk["text"], s, s + chunk["duration"] / 1e7))
+        return bytes(audio), words
+
+    for attempt in range(3):
+        try:
+            audio, words = asyncio.run(run())
+            if audio:
+                break
+        except Exception as e:   # the free service occasionally drops a connection
+            log.warning("Edge TTS failed (%s), retrying...", e)
+    else:
+        raise RuntimeError(f"Edge TTS failed for line: {text[:40]}")
+    mp3 = out_wav.with_suffix(".mp3")
+    mp3.write_bytes(audio)
+    run_ffmpeg(["-i", str(mp3), "-ar", "44100", "-ac", "1", "-c:a", "pcm_s16le", str(out_wav)])
+    mp3.unlink()
+    if not words:
+        return estimate_alignment(text, media_duration(out_wav))
+    return _attach_punctuation(text, words)
+
+
 def tts_line_mock(cfg: dict, speaker: str, text: str, out_wav: Path) -> tuple[list, list, list]:
     voice = "kal16" if speaker == "narrator" else FLITE_VOICES[sum(map(ord, speaker)) % len(FLITE_VOICES)]
     txt = out_wav.with_suffix(".txt")
@@ -96,7 +182,10 @@ def narrate(cfg: dict, script: dict, job_dir: Path, mock: bool = False) -> dict:
     silence = tmp / "gap.wav"
     run_ffmpeg(["-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", f"{gap}", "-c:a", "pcm_s16le", str(silence)])
 
-    fn = tts_line_mock if mock else tts_line
+    provider = cfg["providers"]["tts"]
+    fn = tts_line_mock if mock else {"edge": tts_line_edge, "elevenlabs": tts_line}.get(provider)
+    if fn is None:
+        raise SystemExit(f"Unknown providers.tts '{provider}' (use edge or elevenlabs)")
     words, line_times, playlist, t = [], [], [], 0.0
     for i, ln in enumerate(lines):
         wav = tmp / f"line{i:03d}.wav"
