@@ -23,7 +23,11 @@ providers:
 
 llm:
   gemini:
-    model: "gemini-2.5-flash"
+    model: "gemini-3.8-flash"
+    # Tried in order when the model above is busy (503/429), retired (404) or times out.
+    # All are on the free tier. See what your key can use: https://aistudio.google.com
+    fallback_models: ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]
+    timeout: 120                 # seconds per attempt before moving to the next model
     max_tokens: 8000
     temperature: 1.0
   claude:

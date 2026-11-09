@@ -7,7 +7,9 @@ Note: Google may use free-tier prompts to improve its products. Fine for story s
 """
 from __future__ import annotations
 
-from .common import env, http
+import requests
+
+from .common import APIError, env, http, log
 
 
 def chat(cfg: dict, system: str, prompt: str, want_json: bool = True) -> str:
@@ -20,25 +22,46 @@ def chat(cfg: dict, system: str, prompt: str, want_json: bool = True) -> str:
 
 
 def _gemini(cfg: dict, system: str, prompt: str, want_json: bool) -> str:
+    """Free-tier models get busy (503) or retired (404) without notice, so try the
+    configured model first and fall back to the others instead of waiting on one."""
     c = cfg["llm"]["gemini"]
     gen = {"temperature": c.get("temperature", 1.0), "maxOutputTokens": c.get("max_tokens", 8000)}
     if want_json:
         gen["responseMimeType"] = "application/json"
-    r = http(
-        "POST", f"https://generativelanguage.googleapis.com/v1beta/models/{c['model']}:generateContent",
-        headers={"x-goog-api-key": env("GEMINI_API_KEY"), "Content-Type": "application/json"},
-        json={
-            "systemInstruction": {"parts": [{"text": system}]},
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": gen,
-        },
-        timeout=180,
-    )
-    data = r.json()
-    try:
-        return "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"])
-    except (KeyError, IndexError):
-        raise RuntimeError(f"Gemini returned no text: {str(data)[:400]}")
+    body = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": gen,
+    }
+    key = env("GEMINI_API_KEY")
+    models = [c["model"]] + [m for m in c.get("fallback_models") or [] if m != c["model"]]
+    errors = []
+    for model in models:
+        try:
+            r = http(
+                "POST", f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                headers={"x-goog-api-key": key, "Content-Type": "application/json"},
+                json=body, timeout=c.get("timeout", 120), retries=1,
+            )
+        except APIError as e:
+            if " (404)" not in str(e):          # bad key / bad request: another model won't help
+                raise
+            errors.append(f"{model}: not available")
+        except requests.RequestException as e:   # 429 / 5xx / timeout after retries
+            errors.append(f"{model}: {str(e).splitlines()[0][:80]}")
+        else:
+            data = r.json()
+            try:
+                text = "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"])
+            except (KeyError, IndexError):
+                errors.append(f"{model}: no text ({str(data)[:200]})")
+                continue
+            if model != models[0]:
+                log.info("Gemini: used fallback model %s", model)
+            return text
+        log.warning("Gemini %s unavailable, trying the next model ...", model)
+    raise RuntimeError("All Gemini models failed. Try again in a few minutes or change llm.gemini in config.yaml:\n  "
+                       + "\n  ".join(errors))
 
 
 def _claude(cfg: dict, system: str, prompt: str) -> str:
