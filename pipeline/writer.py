@@ -185,8 +185,37 @@ def validate(script: dict) -> None:
 
 def brainstorm(cfg: dict, genre: str, n: int = 10, series: dict | None = None) -> list[str]:
     ctx = f" for the series '{series['name']}' ({series['premise']})" if series else ""
+    done = [e["title"] for e in series_memory(cfg, series["id"])] if series else [h["title"] for h in load_history(cfg)[-40:]]
+    avoid = f" Don't repeat these earlier stories: {json.dumps(done[-40:], ensure_ascii=False)}." if done else ""
     text = _llm(cfg, system_prompt(cfg),
-                   f"Give {n} original, scroll-stopping {genre} episode premises{ctx}. "
-                   f"One line each: characters + conflict + twist. Return a JSON list of strings only.")
+                f"Give {n} original, scroll-stopping {genre} episode premises{ctx}. "
+                f"One line each: characters + conflict + twist.{avoid} Return a JSON list of strings only.")
     m = re.search(r"\[.*\]", text, re.S)
-    return json.loads(m.group(0)) if m else [text]
+    items = json.loads(m.group(0)) if m else [text]
+    # some models return objects instead of plain strings
+    return [i if isinstance(i, str) else " ".join(str(v) for v in i.values()) if isinstance(i, dict) else str(i)
+            for i in items if i]
+
+
+# ---------------------------------------------------------------- idea bank
+def _bank_path(cfg: dict):
+    return rel(cfg["paths"]["series_memory_dir"]) / "ideas_bank.json"
+
+
+def take_idea(cfg: dict, genre: str, series: dict | None = None) -> tuple[str, int]:
+    """Next unused premise for this series + genre. Ten are brainstormed in ONE request
+    and stored, so ideas cost 1 free Gemini request per ~10 videos. Returns (idea, ideas left)."""
+    p = _bank_path(cfg)
+    bank = json.loads(p.read_text("utf-8")) if p.exists() else {}
+    key = f"{series['id'] if series else 'standalone'} | {genre}"
+    ideas = bank.get(key) or []
+    if not ideas:
+        log.info("  idea bank for %s is empty: brainstorming 10 new ideas ...", key)
+        ideas = [i.strip() for i in brainstorm(cfg, genre, 10, series) if i.strip()]
+        if not ideas:
+            raise RuntimeError("The writer returned no ideas")
+    idea = ideas.pop(0)
+    bank[key] = ideas
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(bank, indent=2, ensure_ascii=False), "utf-8")
+    return idea, len(ideas)

@@ -257,5 +257,5 @@ def narrate(cfg: dict, script: dict, job_dir: Path, mock: bool = False) -> dict:
     timing = {"duration": total, "words": words, "lines": line_times, "shots": shots}
     (job_dir / "timing.json").write_text(json.dumps(timing, indent=2, ensure_ascii=False), "utf-8")
     speakers = sorted({l["speaker"] for l in lines})
-    log.info("Voices: %.1fs, %d lines, speakers: %s", total, len(lines), ", ".join(speakers))
+    log.debug("Voices: %.1fs, %d lines, speakers: %s", total, len(lines), ", ".join(speakers))
     return timing

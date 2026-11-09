@@ -26,6 +26,7 @@ class NoInternet(RuntimeError):
 
 
 _skip: dict[str, str] = {}      # model -> why it's skipped for the rest of this run
+last_model = ""                 # the model that wrote the last answer (shown in the phase tracker)
 
 
 def chat(cfg: dict, system: str, prompt: str, want_json: bool = True) -> str:
@@ -102,6 +103,7 @@ def _ask_gemini(model: str, key: str, body: dict, limit: int):
 def _gemini(cfg: dict, system: str, prompt: str, want_json: bool) -> str:
     """Free-tier models get busy (503), hit daily limits (429) or retire (404) without
     notice, so try the configured model first and move down the fallback list."""
+    global last_model
     c = cfg["llm"]["gemini"]
     gen = {"temperature": c.get("temperature", 1.0), "maxOutputTokens": c.get("max_tokens", 8000)}
     if want_json:
@@ -127,6 +129,7 @@ def _gemini(cfg: dict, system: str, prompt: str, want_json: bool) -> str:
         for attempt in (1, 2):
             text, fail = _ask_gemini(model, key, body, limit)
             if text is not None:
+                last_model = model
                 if n:
                     log.info("Gemini: used fallback model %s", model)
                 return text
