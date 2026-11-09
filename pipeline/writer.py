@@ -147,16 +147,27 @@ Requirements:
 Return ONLY valid JSON in this exact shape, no prose:
 {_schema(cfg)}"""
 
+    best, best_words, asked_again = None, 0, False
     for _ in range(3):
         try:
             data = _extract_json(_llm(cfg, system_prompt(cfg), prompt))
             validate(data)
-            log.info("Story: %s  (%s, %d shots, cast: %s)", data["title"], genre, len(data["shots"]),
-                     ", ".join(c.get("name", c["id"]) for c in data["cast"]))
-            return data
         except (ValueError, KeyError, json.JSONDecodeError) as e:
             log.warning("Bad script output (%s), retrying...", e)
-    raise RuntimeError("Could not get a valid script from the writer")
+            continue
+        words = sum(len(ln["text"].split()) for s in data["shots"] for ln in s["lines"])
+        if words > best_words:
+            best, best_words = data, words
+        if words >= 0.6 * st["target_words"] or asked_again:
+            break
+        # smaller fallback models sometimes write very short scripts (= a ~30 s video); keep the longer one
+        log.warning("Script is short (%d words, want ~%d); asking once more ...", words, st["target_words"])
+        asked_again = True
+    if best is None:
+        raise RuntimeError("Could not get a valid script from the writer")
+    log.info("Story: %s  (%s, %d shots, %d words, cast: %s)", best["title"], genre, len(best["shots"]), best_words,
+             ", ".join(c.get("name", c["id"]) for c in best["cast"]))
+    return best
 
 
 def validate(script: dict) -> None:
