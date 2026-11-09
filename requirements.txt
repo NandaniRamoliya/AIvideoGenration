@@ -1,0 +1,7 @@
+requests>=2.31
+PyYAML>=6.0
+python-dotenv>=1.0
+# Only needed for YouTube publishing:
+google-api-python-client>=2.100
+google-auth-oauthlib>=1.2
+fal-client>=0.5        # uploads character reference images to fal (optional, recommended)

@@ -1,0 +1,154 @@
+# ============================================================
+#  AI Character Story Shorts — settings
+#  Secrets (API keys) go in .env, everything else lives here.
+# ============================================================
+
+channel:
+  name: "Story Vault"
+  language: "English"
+  audience: "general audience, 13+"
+  call_to_action: "Follow for the next episode."
+
+llm:
+  model: "claude-sonnet-5-5"
+  max_tokens: 5000
+
+# Default look for every video. Each series can override it.
+# Examples: "3D animated Pixar-style film" | "anime, Studio-Ghibli-inspired painterly"
+#           "photorealistic cinematic film still" | "2D storybook illustration"
+visual_style: "3D animated feature-film style, expressive characters, soft cinematic lighting, rich colour, shallow depth of field"
+
+# ------------------------------------------------------------
+# SERIES — recurring characters in a recurring world.
+# `make --series <id>` writes the next episode with this cast and
+# remembers what happened before. Characters live in characters/<id>/.
+# Leave `series` empty or run `make` without --series for one-off stories:
+# the writer invents a fresh cast, and those characters are saved too.
+# ------------------------------------------------------------
+series:
+  - id: "grandma-tales"
+    name: "Dadi's Midnight Tales"
+    premise: "Every night Dadi tells her curious grandson Kabir a story — and the story always turns out to be a little bit real."
+    genres: ["mythology & folklore", "fantasy adventure", "mystery with a twist"]
+    world: "a cosy old haveli in a Gujarati town, monsoon nights, lantern light"
+    cast: ["dadi", "kabir"]          # created automatically on first run
+    visual_style: null               # null = use visual_style above
+
+  - id: "space-cadets"
+    name: "Zara & Bolt"
+    premise: "A daring teen pilot and her sarcastic repair robot take odd jobs across the galaxy."
+    genres: ["sci-fi", "comedy / absurd", "thriller / survival"]
+    world: "a battered little cargo ship, neon space stations, strange planets"
+    cast: ["zara", "bolt"]
+    visual_style: null
+
+# One-off stories rotate through these genres.
+genres:
+  - { name: "horror / creepy",        weight: 3 }
+  - { name: "mystery with a twist",   weight: 3 }
+  - { name: "sci-fi",                 weight: 2 }
+  - { name: "fantasy adventure",      weight: 2 }
+  - { name: "mythology & folklore",   weight: 2 }
+  - { name: "urban legend",           weight: 2 }
+  - { name: "thriller / survival",    weight: 2 }
+  - { name: "heartwarming",           weight: 1 }
+  - { name: "comedy / absurd",        weight: 1 }
+  - { name: "time travel",            weight: 1 }
+  - { name: "animal tale",            weight: 1 }
+
+story:
+  target_words: 150            # ~60 s total speech
+  min_shots: 6
+  max_shots: 9
+  max_characters: 3            # per story (more = harder to keep consistent)
+  dialogue_share: "about half the words are spoken by characters, the rest by the narrator"
+  rules:
+    - "Original stories only: no real people, no copyrighted characters or franchises."
+    - "The first line must be a hook that stops the scroll."
+    - "Characters must want something; end with a twist, a reveal or an emotional payoff."
+    - "Keep violence non-graphic; suitable for YouTube Shorts and Instagram Reels."
+
+# ------------------------------------------------------------
+# Voices — ElevenLabs voice IDs by type. The writer assigns a type to
+# each new character; you can change any character's voice later in
+# characters/<id>/character.yaml.
+# These are starter IDs from ElevenLabs' default library — run
+#   python run.py voices
+# to list the voices in YOUR account and paste the ones you like here.
+# ------------------------------------------------------------
+voices:
+  narrator:      "JBFqnCBsd6RMkjVDRZzb"
+  man:           "TxGEqnHWrfWFTfGW9XjX"
+  woman:         "EXAVITQu4vr4xnSDxMaL"
+  old_man:       "pqHfZKP75CvOlQylNhV4"
+  old_woman:     "XrExE9yKIg1WjnnlVkGX"
+  boy:           "jBpfuIE2acCO8z3wKNLl"
+  girl:          "jsCqWAovK2LkecY7zXl4"
+  robot_creature: "N2lVS1w4EtoT3dr4eOWO"
+
+tts:
+  model_id: "eleven_multilingual_v2"
+  stability: 0.45
+  similarity_boost: 0.8
+  style: 0.4
+  gap_between_lines: 0.18      # seconds of silence between speakers
+
+# ------------------------------------------------------------
+# Image + video models (fal.ai)
+# ------------------------------------------------------------
+images:
+  text_to_image: "fal-ai/nano-banana"          # first portrait of a new character
+  edit: "fal-ai/nano-banana/edit"              # keyframes built FROM character reference images
+  aspect_ratio: "9:16"
+  price_per_image: 0.04
+
+video:
+  model: "fal-ai/kling-video/v3/standard/image-to-video"
+  use_elements: true            # pass character reference sheets to Kling for consistent faces in motion
+  generate_audio: false         # voices + music are added in the edit
+  min_clip_seconds: 3
+  max_clip_seconds: 15
+  negative_prompt: "blur, distortion, extra limbs, deformed hands, face morphing, text, watermark, low quality"
+  cfg_scale: 0.5
+  price_per_second: 0.084
+  parallel_jobs: 3
+
+# ------------------------------------------------------------
+# Edit + captions
+# ------------------------------------------------------------
+render:
+  width: 1080
+  height: 1920
+  fps: 30
+  crf: 20
+  music_dir: "assets/music"
+  music_volume: 0.12
+  fonts_dir: "assets/fonts"
+
+captions:
+  font: "Montserrat ExtraBold"
+  size: 78
+  words_per_chunk: 3
+  color: "&H00FFFFFF"            # ASS colours are &HAABBGGRR
+  narrator_highlight: "&H0000E5FF"   # yellow; characters use their own colour
+  outline_color: "&H00000000"
+  outline: 6
+  position_y: 1300
+  show_speaker_name: true        # small name tag above a character's lines
+  show_title_card: true
+
+publish:
+  youtube:
+    enabled: true
+    client_secrets_file: "secrets/client_secret.json"
+    token_file: "secrets/youtube_token.json"
+    privacy: "public"
+    category_id: "24"
+    made_for_kids: false
+    contains_synthetic_media: true
+
+paths:
+  jobs_dir: "output/jobs"
+  history_file: "output/history.json"
+  characters_dir: "characters"
+  series_memory_dir: "series_memory"

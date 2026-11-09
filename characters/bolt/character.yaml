@@ -1,0 +1,8 @@
+id: bolt
+name: Bolt
+look: small round repair robot the size of a dog, dented white-and-orange metal shell,
+  one big glowing cyan eye, two spindly arms with tools, hovers on a thruster
+personality: sarcastic, cautious, loyal
+voice_type: robot_creature
+caption_color: '&H004FA3FF'
+voice_id: null
