@@ -38,7 +38,7 @@ llm:
 # List all voices: python run.py voices   (Hindi: hi-IN-SwaraNeural / hi-IN-MadhurNeural,
 # Gujarati: gu-IN-DhwaniNeural / gu-IN-NiranjanNeural)
 edge_voices:
-  narrator:       { voice: "en-IN-PrakashNeural", rate: "-5%",  pitch: "+0Hz" }
+  narrator:       { voice: "en-IN-PrabhatNeural", rate: "-5%",  pitch: "+0Hz" }
   man:            { voice: "en-US-GuyNeural",     rate: "+0%",  pitch: "+0Hz" }
   woman:          { voice: "en-IN-NeerjaNeural",  rate: "+0%",  pitch: "+0Hz" }
   old_man:        { voice: "en-GB-RyanNeural",    rate: "-10%", pitch: "-8Hz" }

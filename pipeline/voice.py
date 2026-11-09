@@ -85,6 +85,46 @@ def _edge_voice(cfg: dict, speaker: str) -> dict:
     return voices.get(ch.data.get("voice_type", ""), voices["narrator"])
 
 
+FEMALE_TYPES = {"woman", "old_woman", "girl", "boy"}   # 'boy' uses a pitched-down young female voice
+_edge_catalog: dict[str, dict] | None = None
+_swapped: dict[str, str] = {}
+
+
+def _edge_available() -> dict[str, dict]:
+    """ShortName -> voice info from Microsoft's live list (empty if it can't be fetched)."""
+    global _edge_catalog
+    if _edge_catalog is None:
+        import asyncio
+        import edge_tts
+        try:
+            _edge_catalog = {v["ShortName"]: v for v in asyncio.run(edge_tts.list_voices())}
+        except Exception as e:
+            log.warning("Could not fetch the Edge voice list (%s); voice names are not checked.", e)
+            _edge_catalog = {}
+    return _edge_catalog
+
+
+def _checked_voice(cfg: dict, speaker: str, name: str) -> str:
+    """Edge answers 'No audio was received' for a voice it doesn't have. Swap such a
+    voice for a real one with the same language and gender, and say so once."""
+    voices = _edge_available()
+    if not voices or name in voices:
+        return name
+    if name not in _swapped:
+        vtype = "narrator" if speaker == "narrator" else cast.Character(cfg, speaker).data.get("voice_type", "")
+        gender = "Female" if vtype in FEMALE_TYPES else "Male"
+        locale = "-".join(name.split("-")[:2])
+        pick = (next((v for v, i in voices.items() if i.get("Locale") == locale and i.get("Gender") == gender), None)
+                or next((v for v, i in voices.items() if i.get("Locale") == locale), None)
+                or next((v for v, i in voices.items() if i.get("Locale", "").startswith(locale[:2]) and i.get("Gender") == gender), None)
+                or "en-US-EmmaMultilingualNeural")
+        log.warning("Edge has no voice '%s' (used for %s); using '%s' instead. "
+                    "Fix it in config.yaml > edge_voices or the character's edge_voice "
+                    "(list voices: python run.py voices --lang %s)", name, speaker, pick, locale)
+        _swapped[name] = pick
+    return _swapped[name]
+
+
 def _norm(t: str) -> str:
     return "".join(ch for ch in t.lower() if ch.isalnum())
 
@@ -126,13 +166,14 @@ def tts_line_edge(cfg: dict, speaker: str, text: str, out_wav: Path) -> tuple[li
     except ImportError:
         raise SystemExit("Free voices need the edge-tts package: pip install edge-tts")
     v = _edge_voice(cfg, speaker)
+    name = _checked_voice(cfg, speaker, v["voice"])
     kw = {"rate": v.get("rate", "+0%"), "pitch": v.get("pitch", "+0Hz")}
 
     async def run():
         try:
-            comm = edge_tts.Communicate(text, v["voice"], boundary="WordBoundary", **kw)
+            comm = edge_tts.Communicate(text, name, boundary="WordBoundary", **kw)
         except TypeError:          # older edge-tts versions always send word boundaries
-            comm = edge_tts.Communicate(text, v["voice"], **kw)
+            comm = edge_tts.Communicate(text, name, **kw)
         audio, words = bytearray(), []
         async for chunk in comm.stream():
             if chunk["type"] == "audio":
