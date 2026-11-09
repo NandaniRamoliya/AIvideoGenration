@@ -23,11 +23,13 @@ providers:
 
 llm:
   gemini:
-    model: "gemini-3.8-flash"
-    # Tried in order when the model above is busy (503/429), retired (404) or times out.
-    # All are on the free tier. See what your key can use: https://aistudio.google.com
-    fallback_models: ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]
-    timeout: 120                 # seconds per attempt before moving to the next model
+    model: "gemini-3.5-flash"
+    # Tried in order when the model above is busy (503), out of free requests (429:
+    # each model allows ~20 per day on the free tier), retired (404) or too slow.
+    # Usage per model: https://ai.dev/rate-limit
+    fallback_models: ["gemini-3.1-flash-lite", "gemini-3.8-flash", "gemini-flash-latest"]
+    thinking_level: "low"        # low = ~35 s per script instead of ~2.5 min; a short story doesn't need more
+    timeout: 150                 # hard limit in seconds per try, then the next model
     max_tokens: 8000
     temperature: 1.0
   claude:

@@ -107,6 +107,7 @@ def produce(cfg: dict, job: Job, mock: bool, genre: str | None = None, idea: str
     except Exception as e:
         job.set(status="failed", error=str(e))
         log.error("✘ %s failed: %s", job.id, e)
+        log.info("   Fix that, then continue this video with:  python run.py resume %s", job.id)
         raise
 
 
