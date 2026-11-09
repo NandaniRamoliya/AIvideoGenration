@@ -36,7 +36,7 @@ def ingest_characters(cfg: dict, job: Job) -> list[str]:
     """Move char_<id>.* files from the inbox into the character library."""
     done = []
     for f in inbox(job).iterdir():
-        m = re.match(r"char[_-]([a-z0-9-]+)\.", f.name.lower())
+        m = re.match(r"char[_-]([a-z0-9_-]+)\.", f.name.lower())     # ids like cloud_sprite
         if not m or f.suffix.lower() not in IMG_EXT:
             continue
         ch = cast.Character(cfg, m.group(1))
