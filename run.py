@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 """
-AI Character Story Shorts (₹0 by default) — characters → episode script → voices → consistent AI shots → edit → review → publish.
+AI Character Story Shorts (₹0 by default). Every video goes through 9 phases:
 
-  python run.py make --series grandma-tales      next episode of a series (recurring cast + memory)
-  python run.py make --count 3                   3 stand-alone stories with freshly invented characters
+  1 idea · 2 story · 3 voices · 4 characters · 5 scenes · 6 motion · 7 captions · 8 segments · 9 final
+
+  python run.py make --series grandma-tales      new episode: runs the phases until it needs your pictures
+  python run.py make --count 3                   3 stand-alone stories
   python run.py make --genre "sci-fi" --idea "a robot who is afraid of the dark"
+  python run.py status [id]                      phase-by-phase progress of a video (default: the latest)
+  python run.py next <id>                        continue a video from where it stopped
+  python run.py run <id> --phase voices          redo one phase (and the ones after it); --only for just that one
+  python run.py list                             all videos and the phase each one is on
+
+  python run.py pack <id>                        refresh FLOW_PACK.html (✓ marks) while you add pictures
+  python run.py redo <id> --shots 2,5            put shots 2 and 5 aside so you can make new pictures
   python run.py ideas --series space-cadets      brainstorm episode ideas
+  python run.py cast list | cast new ... | series list | voices --lang en-IN
+  python run.py approve <id> | reject <id> | publish --approved [--at "2026-11-10 18:30"] | auth-youtube
 
-  python run.py cast list                        all characters + whether their reference sheet exists
-  python run.py cast new --name "Meera" --look "..." --voice-type girl
-  python run.py cast redesign kabir              regenerate a character's reference images
-  python run.py series list                      series, cast and episode count
-  python run.py voices                           list voices in your ElevenLabs account
-
-  python run.py finish <id>                      (free mode) build the video after you added images/clips
-  python run.py pack <id>                        (free mode) refresh the FLOW_PACK.html checklist
-
-  python run.py list | approve <id> | reject <id> | redo <id> --shots 2,5 | resume <id>
-  python run.py publish <id> | publish --approved [--at "2026-11-10 18:30"] | auth-youtube
-
-Add --mock to make/redo/resume/cast to test free: robot voices + storyboard frames, no API keys.
+  finish / resume are kept as other names for 'next'.
+Add --mock to make: robot voices + storyboard pictures, no API keys, nothing to make by hand.
 """
 from __future__ import annotations
 
@@ -29,130 +29,90 @@ import shutil
 import sys
 from datetime import datetime
 
-from pipeline import assemble, cast, flowpack, visuals, voice, writer
+from pipeline import cast, flowpack, phases, writer
 from pipeline.common import Job, load_config, log, setup_logging
 
 
 # ---------------------------------------------------------------- pipeline
-def manual_mode(cfg: dict, mock: bool) -> bool:
-    return cfg["providers"]["visuals"] == "manual" and not mock
+def ctx_for(cfg: dict, job: Job, **kw) -> phases.Ctx:
+    return phases.Ctx(cfg, job, mock=bool(job.data.get("mock")), **kw)
 
 
-def prepare_cast(cfg: dict, script: dict, style: str, job: Job, mock: bool) -> None:
-    """Register new characters and make sure everyone has a reference sheet."""
-    for spec in script["cast"]:
-        ch = cast.Character(cfg, spec["id"])
-        if not ch.exists:
-            if not spec.get("look"):
-                raise RuntimeError(f"Character '{spec['id']}' isn't in characters/ and the script gave no look for it")
-            ch = cast.register(cfg, {**spec, "style": style})
-        if manual_mode(cfg, mock):
-            continue     # in free mode you design characters on Flow (the pack tells you how)
-        placeholder = (ch.dir / ".mock").exists() and not mock
-        if not ch.has_refs or placeholder:
-            log.info("Designing %s ...", ch.name)
-            cast.build_refs(cfg, ch, ch.data.get("style") or style, mock=mock)
-            if not mock:
-                job.add_cost(2 * cfg["images"]["price_per_image"])
-
-
-def produce(cfg: dict, job: Job, mock: bool, genre: str | None = None, idea: str | None = None, series_id: str | None = None) -> bool:
-    """Runs every stage that hasn't finished yet for this job (safe to re-run).
-    Returns False when the job is waiting for you to add visuals (free mode)."""
+def drive(c: phases.Ctx, **kw) -> str:
+    """Run phases, then print the phase table. Returns 'done', 'waiting' or 'failed'."""
+    log.info("──── %s ────", c.job.id)
     try:
-        series_id = series_id or job.data.get("series")
-        series = writer.get_series(cfg, series_id)
-        style = writer.style_for(cfg, series)
-        sp = job.path("script.json")
-        if sp.exists():
-            script = json.loads(sp.read_text("utf-8"))
-        else:
-            g = writer.pick_genre(cfg, genre, series)
-            if mock:
-                from pipeline.mock import MOCK_SCRIPT
-                script = json.loads(json.dumps(MOCK_SCRIPT))
-            else:
-                script = writer.write_story(cfg, g, idea, series)
-            script["genre"] = script.get("genre") or g
-            sp.write_text(json.dumps(script, indent=2, ensure_ascii=False), "utf-8")
-            job.set(title=script["title"], genre=script["genre"], series=series_id)
+        result = phases.run(c, **kw)
+    except (Exception, SystemExit):           # already logged + recorded by the phase runner
+        result = "failed"
+    print(phases.table(c))
+    return result
 
-        prepare_cast(cfg, script, style, job, mock)
 
-        tp = job.path("timing.json")
-        timing = json.loads(tp.read_text("utf-8")) if tp.exists() else voice.narrate(cfg, script, job.dir, mock=mock)
-
-        if manual_mode(cfg, mock):
-            flowpack.ingest_characters(cfg, job)
-            clips, missing = flowpack.build_clips(cfg, job, script, timing)
-            pack = flowpack.write_pack(cfg, job, script, timing, style)
-            if missing:
-                job.set(status="needs_visuals", missing=missing, error=None)
-                log.info("⏸ %s needs visuals for shot(s) %s", job.id, missing)
-                log.info("   1. open  %s", pack)
-                log.info("   2. save images/clips into  %s", flowpack.inbox(job))
-                log.info("   3. run   python run.py finish %s", job.id)
-                return False
-        else:
-            clips = visuals.make_all_shots(cfg, job, script, timing, style, mock=mock)
-        assemble.render(cfg, job, clips, timing, script)
-        job.set(status="rendered", mock=mock, error=None)
-        if not mock and not job.data.get("remembered"):
-            writer.add_history(cfg, {"title": script["title"], "genre": script["genre"], "job": job.id, "series": series_id})
-            if series_id:
-                writer.add_series_memory(cfg, series_id, script)
-            job.set(remembered=True)
-        log.info("✔ %s ready for review → %s  (est. cost $%.2f)", job.id, job.path("final.mp4"), job.data.get("cost_usd", 0))
-        return True
-    except Exception as e:
-        job.set(status="failed", error=str(e))
-        log.error("✘ %s failed: %s", job.id, e)
-        log.info("   Fix that, then continue this video with:  python run.py resume %s", job.id)
-        raise
+def latest_job(cfg: dict) -> Job:
+    jobs = Job.all(cfg)
+    if not jobs:
+        raise SystemExit("No videos yet. Run: python run.py make --mock")
+    return jobs[-1]
 
 
 # ---------------------------------------------------------------- commands
 def cmd_make(cfg, a):
-    ok = waiting = 0
+    results = []
     for n in range(a.count):
-        log.info("──── Video %d/%d ────", n + 1, a.count)
+        if a.count > 1:
+            log.info("════ Video %d/%d ════", n + 1, a.count)
         job = Job.create(cfg)
-        try:
-            ok += 1 if produce(cfg, job, a.mock, a.genre, a.idea, a.series) else 0
-            waiting += 0 if job.data.get("status") != "needs_visuals" else 1
-        except Exception:
-            if a.count == 1:
-                return 1
-    if waiting:
-        log.info("Done: %d script(s) + voices ready, waiting for your visuals. Open each FLOW_PACK.html (python run.py list).", waiting)
-    else:
-        log.info("Done: %d/%d videos in the review queue. Next: python run.py list", ok, a.count)
-    return 0
+        writer.get_series(cfg, a.series)            # fails early on a wrong --series
+        job.set(series=a.series, mock=a.mock)
+        results.append(drive(ctx_for(cfg, job, genre=a.genre, idea=a.idea)))
+    if a.count > 1:
+        log.info("Done: %d finished · %d waiting for your pictures · %d failed",
+                 results.count("done"), results.count("waiting"), results.count("failed"))
+    return 1 if results.count("failed") == len(results) else 0
 
 
-def cmd_resume(cfg, a):
+def cmd_next(cfg, a):
+    return 1 if drive(ctx_for(cfg, Job.load(cfg, a.id))) == "failed" else 0
+
+
+def cmd_status(cfg, a):
+    job = Job.load(cfg, a.id) if a.id else latest_job(cfg)
+    print(phases.table(ctx_for(cfg, job)))
+
+
+def cmd_run(cfg, a):
     job = Job.load(cfg, a.id)
-    produce(cfg, job, a.mock)
+    c = ctx_for(cfg, job)
+    if a.only:                                    # redo just this phase: clear only its own outputs
+        for pattern in phases.PHASES[phases.NAMES.index(a.phase)].outputs:
+            for f in job.dir.glob(pattern):
+                shutil.rmtree(f) if f.is_dir() else f.unlink()
+    else:
+        phases.clear_from(c, a.phase)
+    log.info("Redoing %s%s", a.phase, "" if a.only else " and the phases after it")
+    return 1 if drive(c, start=a.phase, only=a.only) == "failed" else 0
 
 
 def cmd_redo(cfg, a):
+    """Put the pictures of some shots aside (kept in inbox/_replaced) and redo from 'scenes'."""
     job = Job.load(cfg, a.id)
-    script = json.loads(job.path("script.json").read_text("utf-8"))
-    idx = [int(s) - 1 for s in a.shots.split(",")]
-    media = flowpack.find_media(job, len(script["shots"])) if job.path("inbox").exists() else {}
+    c = ctx_for(cfg, job)
+    script = c.script
+    idx = [int(x) - 1 for x in a.shots.split(",")]
+    media = flowpack.find_media(job, len(script["shots"]))
     for i in idx:
-        for name in (f"shot{i:02d}_clip.mp4", f"shot{i:02d}_key.png"):
-            job.path(name).unlink(missing_ok=True)
-        if i in media and manual_mode(cfg, a.mock):
-            redo_dir = job.path("inbox") / "_replaced"
-            redo_dir.mkdir(exist_ok=True)
-            media[i].rename(redo_dir / media[i].name)      # kept, not deleted
+        if i in media:
+            aside = job.path("inbox") / "_replaced"
+            aside.mkdir(exist_ok=True)
+            media[i].replace(aside / media[i].name)
         script["shots"][i].pop("image_url", None)
         if a.prompt:
             script["shots"][i]["image_prompt"] = a.prompt
     job.path("script.json").write_text(json.dumps(script, indent=2, ensure_ascii=False), "utf-8")
-    job.set(status="draft")
-    produce(cfg, job, a.mock)
+    phases.clear_from(c, "motion")
+    log.info("Shot(s) %s put aside; make new pictures for them.", a.shots)
+    return 1 if drive(c) == "failed" else 0
 
 
 def cmd_list(cfg, a):
@@ -160,19 +120,16 @@ def cmd_list(cfg, a):
     if not jobs:
         print("No videos yet. Run: python run.py make --mock")
         return
-    print(f"{'ID':<22} {'STATUS':<10} {'COST':>6}  {'GENRE':<22} TITLE")
+    print(f"{'ID':<21} {'PHASE':<15} {'STATUS':<15} {'GENRE':<20} TITLE")
     for j in jobs:
         d = j.data
         if a.status and d.get("status") != a.status:
             continue
-        print(f"{d['id']:<22} {d.get('status', ''):<10} ${d.get('cost_usd', 0):>5.2f}  {d.get('genre', '')[:22]:<22} {d.get('title', '')}")
-        if d.get("status") == "rendered":
-            print(f"{'':<22} ↳ watch: {j.path('final.mp4')}")
-        if d.get("status") == "needs_visuals":
-            print(f"{'':<22} ↳ missing shots {d.get('missing')} · open {j.path('FLOW_PACK.html')}")
-            print(f"{'':<22} ↳ drop files in {j.path('inbox')} then: python run.py finish {d['id']}")
-        if d.get("youtube_url"):
-            print(f"{'':<22} ↳ {d['youtube_url']}")
+        done, name = phases.position(ctx_for(cfg, j))
+        mark = {"rendered": "✔", "approved": "✔", "published": "✔", "failed": "✘", "needs_visuals": "⏸"}.get(d.get("status"), "·")
+        print(f"{d['id']:<21} {done}/{len(phases.PHASES)} {name:<11} {mark} {d.get('status', ''):<13} "
+              f"{d.get('genre', '')[:20]:<20} {d.get('title', '')}{'  [mock]' if d.get('mock') else ''}")
+    print("\nDetails of one video: python run.py status <id>")
 
 
 def cmd_review(cfg, a, status):
@@ -298,8 +255,11 @@ def main(argv=None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     m = sub.add_parser("make"); m.add_argument("--series"); m.add_argument("--count", type=int, default=1); m.add_argument("--genre"); m.add_argument("--idea"); m.add_argument("--mock", action="store_true")
-    r = sub.add_parser("resume"); r.add_argument("id"); r.add_argument("--mock", action="store_true")
-    rd = sub.add_parser("redo"); rd.add_argument("id"); rd.add_argument("--shots", required=True, help="e.g. 2,5"); rd.add_argument("--prompt", help="new image prompt for these shots"); rd.add_argument("--mock", action="store_true")
+    for name in ("next", "finish", "resume"):
+        sub.add_parser(name).add_argument("id")
+    st = sub.add_parser("status"); st.add_argument("id", nargs="?")
+    rn = sub.add_parser("run"); rn.add_argument("id"); rn.add_argument("--phase", required=True, choices=phases.NAMES); rn.add_argument("--only", action="store_true", help="redo just this phase")
+    rd = sub.add_parser("redo"); rd.add_argument("id"); rd.add_argument("--shots", required=True, help="e.g. 2,5"); rd.add_argument("--prompt", help="new image prompt for these shots")
     ls = sub.add_parser("list"); ls.add_argument("--status")
     ap = sub.add_parser("approve"); ap.add_argument("id")
     rj = sub.add_parser("reject"); rj.add_argument("id"); rj.add_argument("--note")
@@ -310,7 +270,6 @@ def main(argv=None) -> int:
     cs.add_argument("--name"); cs.add_argument("--look"); cs.add_argument("--personality"); cs.add_argument("--voice-type"); cs.add_argument("--mock", action="store_true")
     sr = sub.add_parser("series"); sr.add_argument("action", choices=["list"])
     vc = sub.add_parser("voices"); vc.add_argument("--lang")
-    fi = sub.add_parser("finish"); fi.add_argument("id")
     pk = sub.add_parser("pack"); pk.add_argument("id")
     sub.add_parser("auth-youtube")
 
@@ -322,11 +281,11 @@ def main(argv=None) -> int:
         p.error("publish needs a job id or --approved")
 
     handlers = {
-        "make": cmd_make, "resume": cmd_resume, "redo": cmd_redo, "list": cmd_list,
+        "make": cmd_make, "next": cmd_next, "finish": cmd_next, "resume": cmd_next,
+        "status": cmd_status, "run": cmd_run, "redo": cmd_redo, "list": cmd_list,
         "approve": lambda c, x: cmd_review(c, x, "approved"), "reject": lambda c, x: cmd_review(c, x, "rejected"),
         "publish": cmd_publish, "ideas": cmd_ideas, "clean": cmd_clean,
         "cast": cmd_cast, "series": cmd_series, "voices": cmd_voices, "pack": cmd_pack,
-        "finish": lambda c, x: produce(c, Job.load(c, x.id), False) and 0,
         "auth-youtube": lambda c, x: __import__("pipeline.youtube", fromlist=["authorize"]).authorize(c),
     }
     return handlers[a.cmd](cfg, a) or 0

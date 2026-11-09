@@ -120,25 +120,24 @@ def fit_clip(src: Path, need: float, out: Path, idx: int) -> Path:
     return out
 
 
-def build_clips(cfg: dict, job: Job, script: dict, timing: dict) -> tuple[list[Path], list[int]]:
-    """Returns (clip paths, missing shot numbers)."""
+def make_motion(cfg: dict, job: Job, script: dict, timing: dict) -> tuple[int, int]:
+    """Motion phase: every inbox file becomes shotNN_clip.mp4 of the right length.
+    Stills get a camera move; clips are fitted. Returns (AI clips, animated stills)."""
     n = len(script["shots"])
     media = find_media(job, n)
     missing = [i + 1 for i in range(n) if i not in media]
     if missing:
-        return [], missing
-    clips = []
+        raise RuntimeError(f"no picture for shot(s) {missing} in {inbox(job)}")
+    clips = 0
     for i in range(n):
         src, need = media[i], timing["shots"][i]["duration"]
         out = job.path(f"shot{i:02d}_clip.mp4")
         if src.suffix.lower() in VID_EXT:
             fit_clip(src, need, out, i)
+            clips += 1
         else:
             animate_still(cfg, src, need + 0.2, i, out)
-        clips.append(out)
-    kinds = sum(1 for p in media.values() if p.suffix.lower() in VID_EXT)
-    log.info("Using %d AI clip(s) + %d animated still(s)", kinds, n - kinds)
-    return clips, []
+    return clips, n - clips
 
 
 # ---------------------------------------------------------------- the pack page

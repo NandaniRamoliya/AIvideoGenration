@@ -1,11 +1,11 @@
-"""Stage 6 + 7: cut clips to the narration, add captions, music, loudness — export 9:16 MP4."""
+"""Phase 8 (segments): cut every shot to its voice timing and join them.
+Phase 9 (final): burn in captions, mix voice + music, loudness, export the 9:16 MP4."""
 from __future__ import annotations
 
 import random
 from pathlib import Path
 
-from .captions import build_ass
-from .common import Job, log, media_duration, rel, run_ffmpeg
+from .common import Job, rel, run_ffmpeg
 
 
 def _filter_path(p: Path) -> str:
@@ -30,8 +30,9 @@ def fit_segments(cfg: dict, job: Job, clips: list[Path], timing: dict) -> Path:
     lst.write_text("".join(f"file '{s.name}'\n" for s in segs), "utf-8")
     visuals = job.path("visuals.mp4")
     run_ffmpeg(["-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", str(visuals)])
-    for s in segs:
-        s.unlink(missing_ok=True)
+    for seg in segs:
+        seg.unlink(missing_ok=True)
+    lst.unlink(missing_ok=True)
     return visuals
 
 
@@ -41,11 +42,11 @@ def pick_music(cfg: dict) -> Path | None:
     return random.choice(tracks) if tracks else None
 
 
-def render(cfg: dict, job: Job, clips: list[Path], timing: dict, script: dict) -> Path:
+def render_final(cfg: dict, job: Job, timing: dict, script: dict) -> tuple[Path, str | None]:
+    """Needs visuals.mp4 (segments), captions.ass (captions) and voice.wav (voices).
+    Returns (final.mp4, music track name or None)."""
     r = cfg["render"]
-    log.info("Assembling video ...")
-    visuals = fit_segments(cfg, job, clips, timing)
-    ass = build_ass(cfg, timing, script.get("hook_text"), job.path("captions.ass"))
+    visuals, ass = job.path("visuals.mp4"), job.path("captions.ass")
 
     fonts = rel(r["fonts_dir"])
     sub = f"subtitles={_filter_path(ass)}" + (f":fontsdir={_filter_path(fonts)}" if fonts.exists() else "")
@@ -69,7 +70,6 @@ def render(cfg: dict, job: Job, clips: list[Path], timing: dict, script: dict) -
         "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
         "-t", f"{timing['duration']:.3f}", str(final),
     ])
-    visuals.unlink(missing_ok=True)
 
     # thumbnail + post kit for manual Instagram / TikTok upload
     run_ffmpeg(["-ss", "1.2", "-i", str(final), "-frames:v", "1", "-q:v", "3", str(job.path("thumbnail.jpg"))])
@@ -78,5 +78,4 @@ def render(cfg: dict, job: Job, clips: list[Path], timing: dict, script: dict) -
         f"YOUTUBE TITLE\n{yt.get('title', '')}\n\nYOUTUBE DESCRIPTION\n{yt.get('description', '')}\n\n"
         f"TAGS\n{', '.join(yt.get('tags', []))}\n\nINSTAGRAM / TIKTOK CAPTION\n{script.get('social_caption', '')}\n\n"
         f"REMINDER: turn on the platform's 'AI-generated content' label when posting.\n", "utf-8")
-    log.info("Rendered %s  (%.1fs, music: %s)", final.name, media_duration(final), music.name if music else "none")
-    return final
+    return final, (music.name if music else None)

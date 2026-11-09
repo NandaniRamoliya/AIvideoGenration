@@ -75,9 +75,17 @@ def motion_prompt(shot: dict, chars: list[cast.Character], style: str, use_eleme
 
 
 # ---------------------------------------------------------------- real providers
+def _inbox_paths(job: Job, i: int) -> tuple[Path, Path]:
+    box = job.path("inbox")
+    box.mkdir(exist_ok=True)
+    return box / f"{i + 1:02d}.png", box / f"{i + 1:02d}.mp4"
+
+
 def make_shot(cfg: dict, job: Job, script: dict, i: int, needed: float, style: str) -> Path:
+    """Paid (fal.ai): keyframe from the character references, then a Kling clip.
+    Both land in the inbox as NN.png / NN.mp4, exactly where you'd put your own."""
     shot = script["shots"][i]
-    img_path, clip_path = job.path(f"shot{i:02d}_key.png"), job.path(f"shot{i:02d}_clip.mp4")
+    img_path, clip_path = _inbox_paths(job, i)
     if clip_path.exists():
         return clip_path
     img_cfg, vid_cfg = cfg["images"], cfg["video"]
@@ -122,11 +130,12 @@ def _esc(t: str) -> str:
 
 
 def make_shot_mock(cfg: dict, job: Job, script: dict, i: int, needed: float, style: str) -> Path:
-    """Storyboard frame: the characters' reference cards + the shot description, with a slow zoom."""
+    """Storyboard frame (the characters' reference cards + the shot description) saved
+    into the inbox as NN.png; the motion phase animates it like any other still."""
     shot = script["shots"][i]
-    img_path, clip_path = job.path(f"shot{i:02d}_key.png"), job.path(f"shot{i:02d}_clip.mp4")
-    if clip_path.exists():
-        return clip_path
+    img_path, _ = _inbox_paths(job, i)
+    if img_path.exists():
+        return img_path
     W, H = cfg["render"]["width"], cfg["render"]["height"]
     chars = [c for c in shot_cast(cfg, shot) if c.has_refs]
     desc = _esc("\n".join(textwrap.wrap(shot["image_prompt"], 38)[:7]))
@@ -143,22 +152,20 @@ def make_shot_mock(cfg: dict, job: Job, script: dict, i: int, needed: float, sty
     graph.append(f"{last}drawtext=text='SHOT {i + 1}  ·  STORYBOARD (mock)':fontcolor=white@0.7:fontsize=40:x=(w-tw)/2:y=200,"
                  f"drawtext=text='{desc}':fontcolor=white:fontsize=44:line_spacing=14:x=(w-tw)/2:y={330 + (int(cw * 16 / 9) if n else 0) + 60}[out]")
     run_ffmpeg([*inputs, "-filter_complex", ";".join(graph), "-map", "[out]", "-frames:v", "1", str(img_path)])
-    secs = clip_seconds(cfg, needed)
-    run_ffmpeg(["-loop", "1", "-i", str(img_path), "-vf",
-                f"zoompan=z='min(zoom+0.0006,1.08)':d=1:s={W}x{H}:fps=30,format=yuv420p",
-                "-t", str(secs), "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", str(clip_path)])
-    return clip_path
+    return img_path
 
 
 # ---------------------------------------------------------------- driver
-def make_all_shots(cfg: dict, job: Job, script: dict, timing: dict, style: str, mock: bool = False) -> list[Path]:
+def fill_inbox(cfg: dict, job: Job, script: dict, timing: dict, style: str, mock: bool = False,
+               missing: list[int] | None = None) -> None:
+    """Automatic scenes: generate the shots that have no file in the inbox yet."""
     fn = make_shot_mock if mock else make_shot
-    n = len(script["shots"])
+    todo = list(range(len(script["shots"]))) if missing is None else missing
     workers = 1 if mock else cfg["video"]["parallel_jobs"]
-    log.info("Generating %d shot(s) with %s ...", n, "storyboard mock" if mock else cfg["video"]["model"])
+    log.info("  making %d shot(s) with %s ...", len(todo), "storyboard mock" if mock else cfg["video"]["model"])
     errors = {}
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futs = {pool.submit(fn, cfg, job, script, i, timing["shots"][i]["duration"], style): i for i in range(n)}
+        futs = {pool.submit(fn, cfg, job, script, i, timing["shots"][i]["duration"], style): i for i in todo}
         for f in as_completed(futs):
             try:
                 f.result()
@@ -167,6 +174,4 @@ def make_all_shots(cfg: dict, job: Job, script: dict, timing: dict, style: str, 
                 log.error("  shot %d failed: %s", futs[f] + 1, e)
     job.path("script.json").write_text(json.dumps(script, indent=2, ensure_ascii=False), "utf-8")
     if errors:
-        raise RuntimeError(f"{len(errors)} shot(s) failed: {sorted(k + 1 for k in errors)}. "
-                           f"Fix and re-run: python run.py resume {job.id}")
-    return [job.path(f"shot{i:02d}_clip.mp4") for i in range(n)]
+        raise RuntimeError(f"{len(errors)} shot(s) failed: {sorted(k + 1 for k in errors)}")
