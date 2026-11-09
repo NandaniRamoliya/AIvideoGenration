@@ -1,7 +1,7 @@
 """₹0 visuals: a 'Flow pack' page with every prompt, a drop folder, and animated stills.
 
 You make the pictures/clips on any free website (Google Flow, Gemini app, Luma, Kling...),
-save them into   output/jobs/<id>/inbox/   and run   python run.py finish <id>.
+save them into   output/jobs/<id>/inbox/   and run   python run.py next <id>.
 
 File names in the inbox:
     01.png / 01.jpg / 01.webp   still image for shot 1  → animated with camera motion
@@ -244,15 +244,18 @@ button{{border:1px solid var(--line);background:var(--bg);color:var(--ink);borde
 <p class="muted">{html.escape(job.id)} · {html.escape(script.get('genre', ''))} · {n} shots · {timing['duration']:.0f}s</p>
 <h1>{html.escape(script['title'])}</h1><p>{html.escape(script.get('logline', ''))}</p>
 <p><b>{done}/{n}</b> shots ready.</p>
-<h2>How to finish this video (free)</h2><ol class="steps">
+<h2>How to finish this video (free)</h2>
+<p class="muted">Two kinds of pictures. <b>Character designs</b> are each character's official look: made <b>once</b>, reused in every episode.
+<b>Scenes</b> are this episode's shots: made every episode, with the character designs attached so faces and outfits match.</p>
+<ol class="steps">
 <li>Open <b>Google Flow</b> (labs.google/fx/tools/flow) — images there don't use credits. Any free image/video site works too.</li>
-<li>Characters first: if a character below says <i>needed</i>, generate it with its design prompt and save it into the inbox as <code>char_&lt;id&gt;.png</code>. You only do this once per character.</li>
-<li>For every shot: add the character reference image(s), paste the <b>image prompt</b>, choose 9:16, save the result as <code>01.png</code>, <code>02.png</code>…</li>
-<li>Have free video credits? Turn the <b>★</b> shots into clips with the <b>video prompt</b> and save as <code>01.mp4</code>. Everything else gets smooth camera motion automatically.</li>
-<li>Drop everything into: <code>{html.escape(str(box))}</code></li>
-<li>Run <code>python run.py finish {html.escape(job.id)}</code></li></ol>
-<h2>Cast</h2>{''.join(char_html)}
-<h2>Shots</h2>{''.join(shot_html)}
+<li><b>Phase 4 · Characters</b> (only if one below says <i>needed</i>): generate it with its design prompt, save into the inbox as <code>char_&lt;id&gt;.png</code>.</li>
+<li><b>Phase 5 · Scenes</b>: for every shot attach the listed character designs, paste the <b>image prompt</b>, choose 9:16, save as <code>01.png</code>, <code>02.png</code>…</li>
+<li>Free video credits? Turn the <b>★</b> shots into clips with the <b>video prompt</b> and save as <code>01.mp4</code>. Every still gets camera motion automatically.</li>
+<li>Save everything into: <code>{html.escape(str(box))}</code> &nbsp;(check progress: <code>python run.py status {html.escape(job.id)}</code>)</li>
+<li>Run <code>python run.py next {html.escape(job.id)}</code> — phases 6–9 (motion, captions, segments, final) run by themselves.</li></ol>
+<h2>Phase 4 · Characters <span class="muted">(once per character)</span></h2>{''.join(char_html)}
+<h2>Phase 5 · Scenes <span class="muted">(this episode)</span></h2>{''.join(shot_html)}
 </main><script>
 function cp(b){{const t=b.closest('.pr').querySelector('pre').innerText;
 (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>{{b.textContent='Copied';setTimeout(()=>b.textContent='Copy',1200)}})

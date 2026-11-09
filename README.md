@@ -51,29 +51,56 @@ pip install -r requirements.txt
 Copy `.env.example` → `.env` and paste a free Gemini key from **aistudio.google.com/apikey** (no card needed).
 That's the only key the free setup needs.
 
-## 2. Make an episode
+## 2. The 9 phases
+
+Every video goes through the same phases. Each one saves its own files in `output/jobs/<id>/`,
+is skipped when it's already done, and can be redone on its own.
+
+| # | Phase | Who | What it makes |
+|---|---|---|---|
+| 1 | **idea** | auto (Gemini) | premise for the episode — from an idea bank: 10 ideas per request |
+| 2 | **story** | auto (Gemini) | script, dialogue, shot list → `script.json` |
+| 3 | **voices** | auto (Edge TTS) | every line in its character's voice → `voice.wav`, `timing.json` |
+| 4 | **characters** | **you**, once per character | official look of each character → `characters/<id>/front.png` |
+| 5 | **scenes** | **you**, every episode | one image (or clip) per shot → `inbox/01.png`, `02.mp4`… |
+| 6 | **motion** | auto (ffmpeg) | camera moves on stills, clips fitted to length |
+| 7 | **captions** | auto | word-by-word captions in each speaker's colour, name tags, hook card |
+| 8 | **segments** | auto | every shot cut to its voice lines, joined |
+| 9 | **final** | auto | captions + voice + music, loudness → `final.mp4`, thumbnail, post kit |
+
+Voices come before the pictures because each shot's length comes from its lines — so the
+pipeline stops for you only once.
 
 ```bash
-python run.py make --series grandma-tales
+python run.py make --series grandma-tales   # runs phases 1-3, then waits for your pictures
+python run.py status <id>                   # the phase table (no id = latest video)
+python run.py next <id>                     # continue from where it stopped
+python run.py run <id> --phase voices       # redo a phase and everything after it (--only: just that one)
+python run.py list                          # every video and the phase it's on
 ```
-In ~30 seconds you get the script and all voices, then it pauses:
 ```
-⏸ 20261109-0930 needs visuals for shot(s) [1, 2, 3, 4, 5, 6]
-   1. open  output/jobs/20261109-0930/FLOW_PACK.html
-   2. save images/clips into  output/jobs/20261109-0930/inbox
-   3. run   python run.py finish 20261109-0930
+  The Rain Maker's Key   20261109-184701-117
+  1 idea       ✔ done       8.6s  "Dadi tells Kabir about a key that locks the monsoon…"  (idea bank, 9 left)
+  2 story      ✔ done      11.0s  "The Rain Maker's Key" · 6 shots · 104 words · gemini-3.5-flash
+  3 voices     ✔ done      39.0s  60.4 s · 10 lines · dadi, kabir, narrator
+  4 characters ⏸ waiting          need: char_dadi.png, char_kabir.png
+  5 scenes     ⏸ waiting          0/6 shots · missing 01, 02, 03, 04, 05, 06
+  6 motion     · pending
+  ...
+  Next → open .../FLOW_PACK.html, save the files into .../inbox, then: python run.py next 20261109-184701-117
 ```
 
-## 3. Open FLOW_PACK.html and make the visuals
+## 3. Phases 4 + 5: make the pictures with FLOW_PACK.html
 
-The page lists the cast and every shot, with **Copy** buttons:
+Two kinds of pictures: **character designs** are each character's official look (made **once**, reused
+in every episode); **scenes** are this episode's shots (made every episode, with the designs attached
+so faces and outfits match). The page lists both, with **Copy** buttons:
 
 1. Go to **Google Flow** (labs.google/fx/tools/flow) or any free image site.
 2. **Characters (first time only):** copy the design prompt, generate, save into the inbox as `char_dadi.png`, `char_kabir.png`…
-   From then on that image is the character's official look, shown in every future pack.
-3. **Each shot:** attach the listed character images as references, paste the image prompt, pick **9:16**, save as `01.png`, `02.png`…
+3. **Each shot:** attach the listed character designs as references, paste the image prompt, pick **9:16**, save as `01.png`, `02.png`…
 4. **★ shots:** if you have free video credits, turn that image into a clip with the video prompt and save as `01.mp4`.
-5. Run `python run.py finish <id>`.
+5. Run `python run.py next <id>` — phases 6-9 run by themselves.
 
 Inbox naming rules: the **first number** in the file name is the shot (`03.png`, `shot_03.jpg`, `Flow_03.mp4` all work).
 `.png/.jpg/.webp` = still image (animated automatically). `.mp4/.mov/.webm` = clip (used as-is; preferred if both exist;
@@ -87,7 +114,7 @@ short clips are slowed slightly instead of freezing; landscape clips get centre-
 python run.py list
 python run.py approve <id>
 python run.py reject  <id> --note "weak ending"
-python run.py redo    <id> --shots 3        # moves shot 3's file aside so you can make a new one
+python run.py redo    <id> --shots 3        # puts shot 3's picture aside (inbox/_replaced) so you can make a new one
 python run.py publish --approved            # YouTube (free API) — setup below
 ```
 Every job folder has `final.mp4`, `thumbnail.jpg` and `post_kit.txt` (titles, hashtags, captions for Instagram/TikTok).
@@ -132,7 +159,7 @@ New projects have a small daily upload quota, and uploads may stay private until
 ```bash
 python run.py make --series grandma-tales && python run.py make --count 2    # morning: scripts + voices (automatic)
 # open each FLOW_PACK.html, make images on Flow, drop them in the inbox          (~10–15 min per video)
-python run.py finish <id>      →   python run.py approve <id>   →   python run.py publish --approved
+python run.py next <id>        →   python run.py approve <id>   →   python run.py publish --approved
 ```
 The first line can run on a schedule (Windows Task Scheduler / cron) so packs are waiting for you every morning.
 
@@ -154,15 +181,16 @@ Any mix works, e.g. free script + free voices + paid visuals.
 
 ## Project layout
 ```
-run.py                  CLI: make, finish, pack, cast, series, ideas, voices, list, approve, redo, publish
+run.py                  CLI: make, status, next, run, list, pack, redo, cast, series, ideas, voices, approve, publish
 config.yaml             providers, series, voices, style, captions
 characters/<id>/        character.yaml + front.png (official look)
 series_memory/          episode summaries per series
-pipeline/llm.py         Gemini (free) / Claude
-pipeline/writer.py      cast + dialogue + shot list, genre rotation, memory
+pipeline/phases.py      the 9 phases: order, skip-if-done, redo, tracking table
+pipeline/llm.py         Gemini (free, with fallback models) / Claude
+pipeline/writer.py      idea bank, cast + dialogue + shot list, genre rotation, memory
 pipeline/voice.py       Edge (free) / ElevenLabs, one voice per speaker, word timings
 pipeline/flowpack.py    FLOW_PACK.html, inbox, animated stills, clip fitting
-pipeline/visuals.py     paid automatic visuals (fal.ai: Nano Banana + Kling 3 elements)
+pipeline/visuals.py     automatic scenes into the inbox: mock storyboards, or paid fal.ai
 pipeline/captions.py    speaker-coloured word-by-word captions, name tags, hook card
 pipeline/assemble.py    ffmpeg edit, music ducking, -14 LUFS
 pipeline/youtube.py     upload / schedule
