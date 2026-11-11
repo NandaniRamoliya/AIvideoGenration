@@ -18,7 +18,7 @@ import shutil
 from pathlib import Path
 
 from . import cast
-from .common import Job, log, run_ffmpeg
+from .common import Job, log, run_ffmpeg, tool
 from .visuals import clip_seconds, speakers_in_shot
 
 IMG_EXT = (".png", ".jpg", ".jpeg", ".webp")
@@ -101,7 +101,7 @@ def fit_clip(src: Path, need: float, out: Path, idx: int) -> Path:
     """Use a downloaded clip; if it's shorter than the shot, slow it down (max 1.5x)
     so it doesn't freeze. Warn when it isn't vertical."""
     import subprocess
-    probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+    probe = subprocess.run([tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries",
                             "stream=width,height:format=duration", "-of", "json", str(src)],
                            capture_output=True, text=True, check=True)
     info = json.loads(probe.stdout)

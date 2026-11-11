@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import random
+import shutil
 import subprocess
 import threading
 import time
@@ -150,8 +151,36 @@ def download(url: str, dest: Path) -> Path:
 
 
 # ---------------------------------------------------------------- ffmpeg
+_tools: dict[str, str] = {}
+
+
+def tool(name: str) -> str:
+    """Full path of ffmpeg / ffprobe. Looks on PATH first, then in the places a Windows
+    install usually ends up (a terminal opened before the install doesn't see it on PATH)."""
+    if name in _tools:
+        return _tools[name]
+    found = shutil.which(name)
+    if not found:
+        exe = name + (".exe" if os.name == "nt" else "")
+        local = Path(os.environ.get("LOCALAPPDATA", ""))
+        spots = [ROOT / exe, ROOT / "bin" / exe, ROOT / "ffmpeg" / "bin" / exe,
+                 local / "Microsoft" / "WinGet" / "Links" / exe,
+                 Path("C:/ffmpeg/bin") / exe, Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "ffmpeg" / "bin" / exe]
+        packages = local / "Microsoft" / "WinGet" / "Packages"
+        if os.environ.get("LOCALAPPDATA") and packages.exists():
+            spots += sorted(packages.glob(f"Gyan.FFmpeg*/**/bin/{exe}"))
+        found = next((str(f) for f in spots if f.is_file()), None)
+    if not found:
+        raise RuntimeError(
+            f"{name} was not found on this computer. Install it with:  winget install Gyan.FFmpeg\n"
+            f"then close this terminal (and VS Code, if you use its terminal), open it again and re-run. "
+            f"Or put ffmpeg.exe and ffprobe.exe in {ROOT}.")
+    _tools[name] = found
+    return found
+
+
 def run_ffmpeg(args: list[str]) -> None:
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *args]
+    cmd = [tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-y", *args]
     log.debug(" ".join(cmd))
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0:
@@ -160,7 +189,7 @@ def run_ffmpeg(args: list[str]) -> None:
 
 def media_duration(path: Path) -> float:
     out = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)],
+        [tool("ffprobe"), "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)],
         capture_output=True, text=True, check=True,
     ).stdout.strip()
     return float(out)

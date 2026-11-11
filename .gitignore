@@ -434,3 +434,6 @@ secrets/*
 output/
 characters/*/.mock
 characters/*/*.ref.jpg
+/ffmpeg.exe
+/ffprobe.exe
+/ffplay.exe
